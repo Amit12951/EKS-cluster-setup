@@ -1,43 +1,52 @@
-# In this YAML we defined two separate deployments of Nginx:
-# One for x86 instances (amd64 architecture) and another for ARM64 instances (Graviton architecture).
-# In this case, Karpenter will manage the scaling of both instances based on demand, and the node selector ensures the right architecture is used.
+# Here we install Karpenter via Helm + its IAM role and policies
 
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: nginx-x86-deployment
-spec:
-  replicas: 2
-  selector:
-    matchLabels:
-      app: nginx-x86
-  template:
-    metadata:
-      labels:
-        app: nginx-x86
-    spec:
-      nodeSelector:
-        beta.kubernetes.io/arch: "amd64"  # This ensures Nginx is deployed on x86 (Intel/AMD) instances.
-      containers:
-        - name: nginx
-          image: nginx:latest  # Deploying Nginx on x86 instance type.
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: nginx-arm64-deployment
-spec:
-  replicas: 2
-  selector:
-    matchLabels:
-      app: nginx-arm64
-  template:
-    metadata:
-      labels:
-        app: nginx-arm64
-    spec:
-      nodeSelector:
-        beta.kubernetes.io/arch: "arm64"  # This ensures Nginx is deployed on ARM64 (Graviton) instances.
-      containers:
-        - name: nginx
-          image: nginx:latest  # Deploying Nginx on ARM64 (Graviton) instance type.
+resource "helm_release" "karpenter" {
+  name       = "karpenter"
+  repository = "oci://public.ecr.aws/karpenter/karpenter"
+  chart      = "karpenter"
+  version    = "v0.36.0"
+
+  namespace = "karpenter"
+  create_namespace = true
+
+  values = [
+    jsonencode({
+      controller = {
+        clusterName = var.cluster_name
+        clusterEndpoint = module.eks.cluster_endpoint
+        aws = {
+          defaultInstanceProfile = module.eks.eks_managed_node_groups["default"].iam_instance_profile_arn
+        }
+      }
+    })
+  ]
+}
+
+# IAM Role for the EC2 instances Karpenter will launch
+resource "aws_iam_role" "karpenter_node" {
+  name = "KarpenterNodeRole"
+
+  # Allows EC2 instances to assume this role
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [{
+      Effect = "Allow",
+      Principal = {
+        Service = "ec2.amazonaws.com"
+      },
+      Action = "sts:AssumeRole"
+    }]
+  })
+}
+
+# Attach EKS Worker Node permissions to the role
+resource "aws_iam_role_policy_attachment" "karpenter_ec2_policy" {
+  role       = aws_iam_role.karpenter_node.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy"
+}
+
+# Attach networking (CNI) permissions to the role
+resource "aws_iam_role_policy_attachment" "karpenter_cni_policy" {
+  role       = aws_iam_role.karpenter_node.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSCNIPolicy"
+}

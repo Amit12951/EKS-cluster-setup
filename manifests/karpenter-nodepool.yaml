@@ -1,0 +1,30 @@
+apiVersion: karpenter.sh/v1beta1
+kind: NodePool
+metadata:
+  name: default
+spec:
+  template:
+    metadata:
+      labels:
+        type: karpenter-default
+    spec:
+      requirements:
+        # Allows scheduling both Intel/AMD and ARM-based (Graviton) workloads
+        - key: "kubernetes.io/arch"
+          operator: In
+          values: ["amd64", "arm64"]
+
+        # Restricts Karpenter to use Spot instances only (cheaper, preemptible)
+        - key: "karpenter.sh/capacity-type"
+          operator: In
+          values: ["spot"]
+          # In case we want on-demand instances as well, we can add "on-demand"
+
+        # Limits instance types to specific categories (t, m, c families)
+        - key: "karpenter.k8s.aws/instance-category"
+          operator: In
+          values: ["t", "m", "c"]
+  limits:
+    cpu: "1000"
+  disruption:
+    consolidationPolicy: WhenEmpty
