@@ -1,59 +1,41 @@
-# Create a new VPC with public and private subnets for the EKS cluster.
-# Public subnet allows internet access; private subnet is for internal resources.
 
-resource "aws_vpc" "eks_vpc" {
-  cidr_block           = "10.0.0.0/16"
-  enable_dns_support   = true
+#This will be our main enrey point where we will call 2 modules - VPC (for networking infra) + EKS
+
+module "vpc" {
+  source  = "terraform-aws-modules/vpc/aws"
+  version = "5.1.2"
+
+  name = "eks-vpc"
+  cidr = "10.0.0.0/16"
+
+  azs             = ["us-east-1a", "us-east-1b", "us-east-1c"]
+  private_subnets = ["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"]
+  public_subnets  = ["10.0.101.0/24", "10.0.102.0/24", "10.0.103.0/24"]
+
+  enable_nat_gateway = true
+  single_nat_gateway = true
   enable_dns_hostnames = true
 
   tags = {
-    Name = "eks-vpc"
+    Environment = "test"
   }
 }
 
-resource "aws_subnet" "public_subnet" {
-  vpc_id                  = aws_vpc.eks_vpc.id
-  cidr_block              = "10.0.1.0/24"
-  availability_zone       = "us-east-1a"
-  map_public_ip_on_launch = true
+###
+
+module "eks" {
+  source          = "terraform-aws-modules/eks/aws"
+  version         = "20.8.5"
+
+  cluster_name    = var.cluster_name
+  cluster_version = var.cluster_version
+  subnet_ids      = module.vpc.private_subnets
+  vpc_id          = module.vpc.vpc_id
+
+  enable_irsa = true
 
   tags = {
-    Name = "eks-public-subnet"
+    Environment = "test"
   }
 }
 
-resource "aws_subnet" "private_subnet" {
-  vpc_id            = aws_vpc.eks_vpc.id
-  cidr_block        = "10.0.2.0/24"
-  availability_zone = "us-east-1a"
-
-  tags = {
-    Name = "eks-private-subnet"
-  }
-}
-
-resource "aws_internet_gateway" "igw" {
-  vpc_id = aws_vpc.eks_vpc.id
-
-  tags = {
-    Name = "eks-igw"
-  }
-}
-
-resource "aws_route_table" "public_rt" {
-  vpc_id = aws_vpc.eks_vpc.id
-
-  route {
-    cidr_block = "0.0.0.0/0"
-    gateway_id = aws_internet_gateway.igw.id
-  }
-
-  tags = {
-    Name = "eks-public-rt"
-  }
-}
-
-resource "aws_route_table_association" "public_rta" {
-  subnet_id      = aws_subnet.public_subnet.id
-  route_table_id = aws_route_table.public_rt.id
-}
